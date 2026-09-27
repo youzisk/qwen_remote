@@ -22,6 +22,7 @@ import os
 import random
 import re
 import secrets
+import subprocess
 import sys
 import time
 import uuid
@@ -919,12 +920,48 @@ async def handle_index(request: web.Request) -> web.Response:
     )
 
 
+LOGIN_FAILS: dict[str, list[float]] = {}
+LOGIN_WINDOW = 300.0      # 统计窗口 5 分钟
+LOGIN_MAX_FAILS = 5       # 窗口内允许失败 5 次
+LOGIN_LOCK_SEC = 600.0    # 超过后锁定 10 分钟
+
+
+def login_locked(client: str) -> float:
+    """返回剩余锁定秒数,0 表示未被锁定。"""
+    stamps = [t for t in LOGIN_FAILS.get(client, []) if time.time() - t < LOGIN_WINDOW]
+    LOGIN_FAILS[client] = stamps
+    if len(stamps) >= LOGIN_MAX_FAILS:
+        return max(0.0, LOGIN_LOCK_SEC - (time.time() - stamps[-1]))
+    return 0.0
+
+
+def note_login_fail(client: str) -> int:
+    stamps = LOGIN_FAILS.setdefault(client, [])
+    stamps.append(time.time())
+    return max(0, LOGIN_MAX_FAILS - len(stamps))
+
+
 async def handle_login(request: web.Request) -> web.Response:
     body = await request.json()
     token = str(body.get("token") or "")
+    client = request.remote or "unknown"
+
+    remaining = login_locked(client)
+    if remaining > 0:
+        log.warning("登录已锁定:%s 还需等待 %.0f 秒", client, remaining)
+        raise web.HTTPTooManyRequests(
+            text=f"密码错误次数过多,请 {int(remaining / 60) + 1} 分钟后再试"
+        )
+
     if not hmac.compare_digest(token, str(CFG["access_token"])):
+        left = note_login_fail(client)
         await asyncio.sleep(0.5)
-        raise web.HTTPUnauthorized(text="口令不对")
+        log.warning("口令错误:%s(还可尝试 %d 次)", client, left)
+        if left <= 0:
+            raise web.HTTPTooManyRequests(text="密码错误次数过多,已锁定 10 分钟")
+        raise web.HTTPUnauthorized(text=f"口令不对(还可尝试 {left} 次)")
+
+    LOGIN_FAILS.pop(client, None)
     response = web.json_response({"ok": True})
     response.set_cookie(
         SESSION_COOKIE,
@@ -1297,10 +1334,14 @@ ADMIN_PAGE = """<!doctype html>
  #msg{font-size:13px;margin-top:12px;min-height:18px}
  .tip{color:#e0a03c;font-size:12px;margin-top:18px;line-height:1.6}
  code{background:#202430;padding:2px 6px;border-radius:6px}
+ .addr{background:#202430;border:1px solid #2b3040;border-radius:10px;padding:10px 12px;
+       font-size:13px;line-height:1.9;word-break:break-all;color:#e8eaf0}
 </style></head><body>
 <div class="card">
   <h1>主机设置</h1>
   <p class="sub">这个页面只能在运行服务的这台电脑上打开。</p>
+  <label>当前访问地址</label>
+  <div class="addr">__ADDRESSES__</div>
   <label>当前访问口令</label>
   <input value="__TOKEN__" readonly onclick="this.select()">
   <label>新口令(至少 6 位)</label>
@@ -1356,7 +1397,9 @@ def is_local(request: web.Request) -> bool:
 async def handle_admin(request: web.Request) -> web.Response:
     if not is_local(request):
         raise web.HTTPForbidden(text="这个页面只能在运行服务的电脑上打开")
-    page = ADMIN_PAGE.replace("__TOKEN__", escape_attr(CFG["access_token"]))
+    addresses = "<br>".join(escape_attr(url) for url in access_urls())
+    page = ADMIN_PAGE.replace("__ADDRESSES__", addresses or "未检测到")
+    page = page.replace("__TOKEN__", escape_attr(CFG["access_token"]))
     return web.Response(text=page, content_type="text/html", charset="utf-8")
 
 
@@ -1484,6 +1527,120 @@ def write_connect_info(urls: list[str]) -> None:
         log.warning("写入连接信息失败: %s", exc)
 
 
+def _decode_netsh(raw: bytes) -> str:
+    """netsh 的输出编码随运行环境变化:有控制台时是英文、无控制台时是本地语言。
+
+    这里把常见编码都试一遍,取第一个能认出类型关键字的解码结果。
+    """
+    fallback = ""
+    for enc in ("utf-8", "gbk", "cp936", "cp437", "latin-1"):
+        try:
+            candidate = raw.decode(enc, errors="replace")
+        except Exception:  # noqa: BLE001
+            continue
+        if not fallback:
+            fallback = candidate
+        if re.search(r"public|temporary|公共|临时|公用", candidate, re.I):
+            return candidate
+    return fallback
+
+
+def pick_public_ipv6() -> str | None:
+    """挑出稳定的公网 IPv6(排除 Temporary 临时隐私地址)。"""
+    raw = b""
+    try:
+        proc = subprocess.run(
+            ["netsh", "interface", "ipv6", "show", "addresses"],
+            capture_output=True,
+            timeout=10,
+        )
+        raw = proc.stdout or b""
+    except Exception as exc:  # noqa: BLE001
+        log.debug("netsh 调用失败: %s", exc)
+
+    output = _decode_netsh(raw)
+    stable: list[str] = []
+    temporary: list[str] = []
+    for line in output.splitlines():
+        parts = line.split()
+        if len(parts) < 4:
+            continue
+        addr = parts[-1].split("%")[0]
+        if addr.count(":") < 2 or addr.startswith(("fe80", "fd", "::1")):
+            continue
+        kind = parts[0].lower()
+        if kind.startswith("temp") or kind.startswith("临时"):
+            temporary.append(addr)
+        elif kind.startswith("pub") or kind.startswith("公共") or kind.startswith("公用"):
+            stable.append(addr)
+
+    if stable:
+        return stable[0]
+    if temporary:
+        log.warning("只找到临时 IPv6 地址,它可能会自动轮换:%s", temporary[0])
+        return temporary[0]
+    found = global_ipv6()
+    if found:
+        log.debug("netsh 未解析出地址,改用 socket 结果")
+    return found[0] if found else None
+
+
+def all_notify_configs() -> list[dict]:
+    """全局配置 + 每台设备配置,去重后返回,用于系统级通知。"""
+    configs: list[dict] = []
+    seen: set = set()
+
+    def add(conf: dict | None) -> None:
+        if not conf or not notify_ready(conf):
+            return
+        key = (
+            str(conf.get("channel")),
+            str(conf.get("token")),
+            str(conf.get("webhook")),
+        )
+        if key in seen:
+            return
+        seen.add(key)
+        configs.append(conf)
+
+    add(notify_config())
+    for entry in DEVICES.values():
+        add((entry or {}).get("notify") or {})
+    return configs
+
+
+async def notify_all_channels(title: str, body: str) -> None:
+    for conf in all_notify_configs():
+        await send_notification(title, body, None, conf)
+
+
+def access_urls() -> list[str]:
+    """当前可用的访问地址(局域网 + 公网 IPv6)。"""
+    port = CFG["port"]
+    urls = [f"http://{ip}:{port}" for ip in local_ips()]
+    public = pick_public_ipv6()
+    if public:
+        urls.append(f"http://[{public}]:{port}")
+    return urls
+
+
+def global_ipv6() -> list[str]:
+    """挑出本机的公网 IPv6 地址(排除链路本地和临时隐私地址之外的干扰)。"""
+    import socket as _socket
+
+    found: list[str] = []
+    try:
+        for info in _socket.getaddrinfo(_socket.gethostname(), None, _socket.AF_INET6):
+            addr = info[4][0].split("%")[0]
+            if addr.startswith("fe80") or addr.startswith("fd") or addr == "::1":
+                continue
+            if addr not in found:
+                found.append(addr)
+    except Exception:  # noqa: BLE001
+        pass
+    return found
+
+
 def local_ips() -> list[str]:
     import socket
 
@@ -1494,6 +1651,221 @@ def local_ips() -> list[str]:
     except Exception:  # noqa: BLE001
         pass
     return sorted(ip for ip in found if not ip.startswith("127."))
+
+
+async def ipv6_watcher() -> None:
+    """盯着公网 IPv6 地址。
+
+    默认只记日志、不推送;即使开了推送也有多重限制:
+    连续两次看到同一新地址才算变化、同一地址只推一次、两次推送至少间隔 min_notify_gap_sec。
+    """
+    conf = CFG.get("ipv6_watch") or {}
+    if not conf.get("enabled", True):
+        return
+    interval = max(60, int(conf.get("interval_sec", 600)))
+    min_gap = max(0, int(conf.get("min_notify_gap_sec", 21600)))
+    push_enabled = bool(conf.get("notify_on_change", False))
+    history = WORK_DIR / "ipv6_history.log"
+
+    confirmed: str | None = None
+    candidate: str | None = None
+    last_notified: str | None = None
+    last_notify_at = 0.0
+
+    while True:
+        try:
+            current = pick_public_ipv6()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("查询公网 IPv6 出错: %s", exc)
+            current = None
+
+        if current:
+            if current == confirmed:
+                candidate = None
+            elif current == candidate or confirmed is None:
+                # 连续两次看到同一个地址,才认定真的变了
+                stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+                if confirmed is None:
+                    log.info("公网 IPv6:%s", current)
+                else:
+                    log.warning("公网 IPv6 变为 %s(原 %s)", current, confirmed)
+                try:
+                    with history.open("a", encoding="utf-8") as fh:
+                        fh.write(f"{stamp}\t{current}\n")
+                except Exception:  # noqa: BLE001
+                    pass
+                previous, confirmed = confirmed, current
+                candidate = None
+                if previous is not None and push_enabled:
+                    now = time.time()
+                    if last_notified != current and now - last_notify_at >= min_gap:
+                        await notify_all_channels(
+                            "出图助手 · 主机地址变了",
+                            f"新地址:\nhttp://[{current}]:{CFG['port']}",
+                        )
+                        last_notified = current
+                        last_notify_at = now
+            else:
+                candidate = current
+
+        await asyncio.sleep(interval)
+
+
+def address_book_content() -> str:
+    """地址簿正文。
+
+    第一行必须是外网地址:GitHub 的读取只能走 api 域名,手机打开是一段 JSON,
+    地址越靠前越好找。
+    """
+    stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    port = CFG["port"]
+    public = pick_public_ipv6()
+    local = [f"http://{ip}:{port}" for ip in local_ips()]
+
+    head = f"http://[{public}]:{port}" if public else "(未检测到公网 IPv6)"
+    lines = [
+        head,
+        "",
+        f"出图助手 · 主机地址 · 更新于 {stamp}",
+        "",
+        "上一条=手机流量(外网)使用;下面这条=连同一个 WiFi 时使用:",
+        *(local or ["(未检测到局域网地址)"]),
+        "",
+        "公网地址可能随运营商重新分配而变化,本页每 15 分钟自动刷新。",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def github_headers(token: str) -> dict:
+    return {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "qwen-remote-address-book",
+    }
+
+
+def address_book_target(conf: dict) -> tuple[str, str]:
+    """返回 (创建地址, 更新地址模板)。"""
+    provider = str(conf.get("provider") or "gist").lower()
+    if provider == "gitee":
+        return "https://gitee.com/api/v5/gists", "https://gitee.com/api/v5/gists/{item_id}"
+    return "https://api.github.com/gists", "https://api.github.com/gists/{item_id}"
+
+
+def address_book_read_url(conf: dict) -> str:
+    """手机上查地址用的链接。
+
+    GitHub 的 gist 网页/raw 域名在国内被污染(gist.github.com、
+    gist.githubusercontent.com 都不通),所以只能走 api 域名。
+    """
+    item_id = str(conf.get("item_id") or "")
+    if not item_id:
+        return ""
+    provider = str(conf.get("provider") or "gist").lower()
+    if provider == "gitee":
+        return f"https://gitee.com/api/v5/gists/{item_id}"
+    return f"https://api.github.com/gists/{item_id}"
+
+
+async def update_address_book() -> bool:
+    """把当前地址写到地址簿(GitHub Gist 或 Gitee 代码片段)。"""
+    conf = CFG.get("address_book") or {}
+    if not conf.get("enabled"):
+        return False
+    provider = str(conf.get("provider") or "gist").lower()
+    if provider not in ("gist", "gitee"):
+        log.warning("地址簿不支持这个渠道:%s", provider)
+        return False
+    token = str(conf.get("token") or "").strip()
+    if not token:
+        log.warning("地址簿已启用但没填 token(%s),先跳过", provider)
+        return False
+
+    content = address_book_content()
+    filename = str(conf.get("filename") or "qwen-remote-address.txt")
+    item_id = str(conf.get("item_id") or "").strip()
+    create_url, update_tpl = address_book_target(conf)
+    files = {filename: {"content": content}}
+    # 标题里也带上地址:网页版页面最上方就是它
+    public = pick_public_ipv6()
+    description = (
+        f"出图助手 · 手机流量访问 http://[{public}]:{CFG['port']}"
+        if public
+        else "出图助手 · 主机地址(自动更新)"
+    )
+
+    headers = {"User-Agent": "qwen-remote-address-book"}
+    if provider == "gist":
+        headers.update(github_headers(token))
+
+    if item_id:
+        method = "PATCH"
+        url = update_tpl.format(item_id=item_id)
+        payload: dict = {"files": files}
+        if provider == "gitee":
+            payload["access_token"] = token
+        else:
+            payload["description"] = description
+    else:
+        method = "POST"
+        url = create_url
+        payload = {"description": description, "public": False, "files": files}
+        if provider == "gitee":
+            payload["access_token"] = token
+
+    try:
+        timeout = aiohttp.ClientTimeout(total=20)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.request(
+                method, url, json=payload, headers=headers
+            ) as resp:
+                status = resp.status
+                text = await resp.text()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("写地址簿失败(网络):%s", exc)
+        return False
+
+    try:
+        data = json.loads(text)
+    except Exception:  # noqa: BLE001
+        data = {"message": text[:200]}
+
+    if status >= 300:
+        detail = data.get("message") if isinstance(data, dict) else str(data)
+        log.warning("写地址簿被拒绝(%s):%s", status, detail)
+        return False
+
+    if not item_id and isinstance(data, dict):
+        new_id = str(data.get("id") or "")
+        if new_id:
+            conf["item_id"] = new_id
+            CFG["address_book"] = conf
+            save_config()
+            log.info("已创建地址簿(%s),id=%s", provider, new_id)
+            item_id = new_id
+
+    read_url = address_book_read_url(conf)
+    page = data.get("html_url") if isinstance(data, dict) else None
+    log.info("地址簿已更新(%s)", provider)
+    if page:
+        log.info("  网页版(推荐收藏到手机):%s", page)
+    if read_url:
+        log.info("  备用 JSON 地址(网页版打不开时用):%s", read_url)
+    return True
+
+
+async def address_book_loop() -> None:
+    conf = CFG.get("address_book") or {}
+    if not conf.get("enabled"):
+        return
+    interval = max(120, int(conf.get("interval_sec", 900)))
+    while True:
+        try:
+            await update_address_book()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("地址簿任务出错:%s", exc)
+        await asyncio.sleep(interval)
 
 
 async def main() -> None:
@@ -1508,15 +1880,24 @@ async def main() -> None:
     app = build_app()
     app["worker"] = asyncio.create_task(worker())
     app["listener"] = asyncio.create_task(comfy_listener())
+    app["ipv6_watch"] = asyncio.create_task(ipv6_watcher())
+    app["address_book"] = asyncio.create_task(address_book_loop())
 
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", int(CFG["port"]))
-    await site.start()
+    port = int(CFG["port"])
+    # 默认同时监听 IPv4 和 IPv6,这样手机走移动数据(IPv6)也能直连
+    for host in (CFG.get("bind") or ["0.0.0.0", "::"]):
+        try:
+            site = web.TCPSite(runner, host, port, reuse_address=True)
+            await site.start()
+            log.info("已在 %s:%s 上监听", host, port)
+        except OSError as exc:
+            # 常见情况:系统把 IPv6 通配已经覆盖了 IPv4,重复绑定会报占用
+            log.info("跳过 %s:%s(%s)", host, port, exc)
 
-    urls = [f"http://{ip}:{CFG['port']}" for ip in local_ips()] or [
-        f"http://127.0.0.1:{CFG['port']}"
-    ]
+    # 只用稳定地址:临时隐私地址会轮换,写上反而容易让人抄错
+    urls = access_urls() or [f"http://127.0.0.1:{CFG['port']}"]
     log.info("=" * 60)
     log.info("  手机访问地址 / Phone URL :")
     for url in urls:
@@ -1524,6 +1905,14 @@ async def main() -> None:
     log.info("  访问口令 / Access token : %s", CFG["access_token"])
     log.info("  主机设置页 / Admin      : http://127.0.0.1:%s/admin", CFG["port"])
     log.info("=" * 60)
+    token_text = str(CFG["access_token"])
+    if len(token_text) < 10 or token_text.isdigit():
+        log.warning(
+            "口令偏弱(长度 %d)。如果要开放到公网,建议换成 12 位以上的随机字符串,"
+            "可在 http://127.0.0.1:%s/admin 修改",
+            len(token_text),
+            CFG["port"],
+        )
     write_connect_info(urls)
 
     try:
@@ -1550,9 +1939,15 @@ def run_cli() -> bool:
     if args[0] in ("--show-token", "-s"):
         print("当前访问口令:", CFG["access_token"])
         return True
+    if args[0] in ("--show-address", "-a"):
+        print("当前访问地址:")
+        for url in access_urls():
+            print("   ", url)
+        return True
     if args[0] in ("--help", "-h"):
         print("用法:")
         print("  python server.py                     启动服务")
+        print("  python server.py --show-address      查看当前访问地址")
         print("  python server.py --show-token        查看当前口令")
         print("  python server.py --set-token 新口令   修改访问口令")
         return True

@@ -26,6 +26,20 @@
     "include_prompt": true,
     "fallback_to_global": true
   },
+  "ipv6_watch": {
+    "enabled": true,
+    "interval_sec": 600,
+    "notify_on_change": false,
+    "min_notify_gap_sec": 21600
+  },
+  "address_book": {
+    "enabled": false,
+    "provider": "gist",
+    "token": "",
+    "item_id": "",
+    "filename": "qwen-remote-address.txt",
+    "interval_sec": 900
+  },
   "models": {
     "unet": "qwen-image-2.1-UC-Q4_K_M.gguf",
     "clip": "qwen3vl_8b_int8_convrot.safetensors",

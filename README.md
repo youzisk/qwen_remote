@@ -283,3 +283,52 @@ Server酱的新老版本 key 不同,推送地址也不一样,程序会自动识�
   "include_prompt": true
 }
 ```
+
+---
+
+## 十五、手机随时查主机地址(Gist 地址簿)
+
+**要解决的问题**:家里的公网 IPv6 地址可能随运营商重新分配而变化,人在外面时需要有个地方能查到"现在该连哪个地址"。
+
+**做法**:主机每 15 分钟把当前地址写进一个私密 Gist,手机收藏那个页面即可。
+
+创建时会自动生成 Gist(私密,不公开列出),并把 id 写回 `config.json`,之后只做更新。
+
+### 两个收藏链接
+
+| 用途 | 链接 |
+|---|---|
+| 手机浏览器打开(排版正常,推荐) | `https://gist.github.com/<用户名>/<gist_id>` |
+| 备用(网页版打不开时) | `https://api.github.com/gists/<gist_id>` |
+
+主机启动日志里每次都会打印这两条。
+
+### 网络实测结论(2026-09-28,本机)
+
+| 域名 | 电脑 | 手机流量 |
+|---|---|---|
+| `api.github.com` | 稳定 0.3s | 可用 |
+| `gist.github.com` | 3/3 超时 | **可打开** |
+| `gist.githubusercontent.com` | 超时 | 未测 |
+| `raw.githubusercontent.com` | 超时 | 未测 |
+| `cdn.jsdelivr.net`(gist) | 不支持 | — |
+| `cdn.statically.io` | 超时 | — |
+
+所以"纯文本/raw"这类更干净的读法在本地网络不可用,网页版是能用的最优解。
+
+### 配置
+
+```json
+"address_book": {
+  "enabled": true,
+  "provider": "gist",
+  "token": "GitHub PAT,只勾 gist 权限",
+  "item_id": "创建后自动写回",
+  "filename": "qwen-remote-address.txt",
+  "interval_sec": 900
+}
+```
+
+- `provider` 可选 `gist` / `gitee`(Gitee 版本已实现,但当前网络下 GitHub 网页版可用,故未启用)
+- `token` 只勾 `gist` 权限即可,存储在 `config.json`(已加入 `.gitignore`)
+- Gist 是**私密**的:不公开列出,只有拿到含随机 id 的链接才能访问
