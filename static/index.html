@@ -131,11 +131,17 @@
 
 <div id="settingsBox" class="viewer hidden">
   <div class="enhance-card">
-    <div class="enhance-title">通知设置</div>
-    <p class="hint">这里设置的是<strong>这台设备</strong>的推送,别的设备各推各的。</p>
+    <div class="enhance-title">设置</div>
+
+    <label class="label">提示词扩写方案</label>
+    <select id="pePreset"></select>
+    <p class="hint" id="peState"></p>
+
+    <div class="enhance-title">出图通知</div>
+    <p class="hint">只作用于<strong>这台设备</strong>,别的设备各配各的。</p>
     <div id="appNotify" class="notify-form"></div>
     <div class="viewer-actions">
-      <button id="settingsSave" class="primary">保存</button>
+      <button id="settingsSave" class="primary">保存通知设置</button>
       <button id="settingsClose" class="ghost">关闭</button>
     </div>
   </div>

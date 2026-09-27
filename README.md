@@ -332,3 +332,56 @@ Server酱的新老版本 key 不同,推送地址也不一样,程序会自动识�
 - `provider` 可选 `gist` / `gitee`(Gitee 版本已实现,但当前网络下 GitHub 网页版可用,故未启用)
 - `token` 只勾 `gist` 权限即可,存储在 `config.json`(已加入 `.gitignore`)
 - Gist 是**私密**的:不公开列出,只有拿到含随机 id 的链接才能访问
+
+---
+
+## 十六、提示词扩写方案(手机可切换)
+
+设置页(右上角 ⚙)顶部可以选扩写用哪套模型。目前内置三套:
+
+| 方案 id | 说明 | 实测(同一句中文提示词,各跑 4 次) |
+|---|---|---|
+| `pe` | 官方 PE 原版 | **稳定中文**,250~760 字,约 20 秒 |
+| `pe-heretic` | 官方 PE 解限版(heretic 后缀) | **稳定英文**,约 1900 字,约 23 秒 |
+| `gguf` | 本地大模型(解限 GGUF) | **语言不稳定**:4 次里 3 次英文、1 次中文;长度 540~2500 字乱跳;约 14 秒 |
+
+**结论**
+
+- 要中文、要稳定 → `pe`(官方 PE 原版)
+- 要解限效果、能接受英文和超长提示词 → `pe-heretic`
+- `gguf` 最不可控,不建议当默认
+
+注意:`pe-heretic` 设了「输出语言 = 中文」也仍然输出英文 —— 解限过程(abliteration)似乎削弱了指令遵循能力,这是模型本身的特性,不是配置问题。
+
+### 配置结构
+
+```json
+"prompt_enhancer": {
+  "enabled": true,
+  "preset": "pe-heretic",
+  "presets": {
+    "pe": {
+      "label": "官方 PE(原版,中文)",
+      "engine": "本地官方PE",
+      "t2i_model": "qwen3.5_9b_qwen_image_2.1_pe_t2i.int8_convrot.safetensors",
+      "i2i_model": "qwen3.5_9b_qwen_image_2.1_pe_i2i.int8_convrot.safetensors",
+      "main_model": "Q35-4B-G-UD\\Qwen3.5-4B-UD-Q6_K_XL.gguf",
+      "mmproj": "无"
+    }
+  }
+}
+```
+
+**要加新方案,只要往 `presets` 里加一项**,手机上的下拉会自动多出这个选项,不用改代码。
+
+两个坑记一下:
+
+1. `主模型` 和 `mmproj` 是那个 PE 节点的**必填字段**,即使走官方 PE 模式(它们不参与计算)也必须给一个合法值,否则提交时报 `Value not in list`。
+2. 代码里做了兜底:某个方案没写这些字段时,会从其它方案借用。但最好显式写清楚。
+
+### 接口
+
+```
+GET  /api/pe            → 当前方案 + 全部可选方案
+POST /api/pe {"preset": "pe-heretic"}   → 切换(全局生效)
+```

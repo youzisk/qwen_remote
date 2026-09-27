@@ -343,9 +343,41 @@ def build_edit(p: dict, filenames: list[str]) -> dict:
     }
     return g
 
-def build_pe_graph(p: dict) -> dict:
-    """提示词增强:调官方的 PE 模型,把一句话扩写成完整画面描述。"""
+def pe_config() -> dict:
+    """把 presets 里选中的那套参数摊平(兼容没有 presets 的旧配置)。"""
     cfg = CFG.get("prompt_enhancer") or {}
+    presets = cfg.get("presets") or {}
+    name = str(cfg.get("preset") or "")
+    chosen = presets.get(name)
+    merged = dict(cfg)
+    if isinstance(chosen, dict):
+        merged.update(chosen)
+    # 这几个字段是节点必填的,但某些方案里不必显式写(比如用官方 PE 时主模型不参与计算)。
+    # 缺了就从来其它方案里借一个,避免整个扩写因为这个报错。
+    for key in ("main_model", "mmproj", "t2i_model", "i2i_model"):
+        if not merged.get(key):
+            for other in presets.values():
+                if isinstance(other, dict) and other.get(key):
+                    merged[key] = other[key]
+                    break
+    return merged
+
+
+def pe_options() -> list[dict]:
+    presets = (CFG.get("prompt_enhancer") or {}).get("presets") or {}
+    return [
+        {
+            "id": key,
+            "label": (value or {}).get("label") or key,
+            "engine": (value or {}).get("engine", ""),
+        }
+        for key, value in presets.items()
+    ]
+
+
+def build_pe_graph(p: dict) -> dict:
+    """提示词增强:调官方 PE 模型或本地大模型,把一句话扩写成完整画面描述。"""
+    cfg = pe_config()
     inputs = {
         "输入提示词": p["prompt"],
         "任务模式": "图生图" if p.get("mode") == "edit" else "文生图",
@@ -354,9 +386,9 @@ def build_pe_graph(p: dict) -> dict:
         "api_key": "",
         "api_base_url": cfg.get("api_base_url", "https://teynex.com"),
         "model": cfg.get("api_model", "deepseek-v4.1-flash"),
-        "文生图PE模型": cfg["t2i_model"],
-        "图生图PE模型": cfg["i2i_model"],
-        "主模型": cfg["main_model"],
+        "文生图PE模型": cfg.get("t2i_model", ""),
+        "图生图PE模型": cfg.get("i2i_model", ""),
+        "主模型": cfg.get("main_model", ""),
         "mmproj": cfg.get("mmproj", "无"),
         "最大生成token": int(cfg.get("max_tokens", 2048)),
         "上下文长度": int(cfg.get("context", 8192)),
@@ -364,6 +396,9 @@ def build_pe_graph(p: dict) -> dict:
         "生成后自动卸载模型": bool(cfg.get("unload_after", True)),
         "启用思考": bool(cfg.get("think", False)),
     }
+    missing = [k for k in ("main_model",) if not inputs.get("主模型")]
+    if missing:
+        raise RuntimeError("扩写方案配置不完整:缺少「主模型」。请检查 config.json 的 prompt_enhancer.presets")
     graph: dict = {
         "pe": {"class_type": "TE_Qwen_Image_2_1_Prompt_Enhancer", "inputs": inputs},
         "disp": {"class_type": "TE_text_display", "inputs": {"text": ["pe", 0]}},
@@ -1463,6 +1498,32 @@ async def handle_notify_test(request: web.Request) -> web.Response:
 
 
 @require_auth
+async def handle_pe_get(request: web.Request) -> web.Response:
+    cfg = CFG.get("prompt_enhancer") or {}
+    return web.json_response(
+        {
+            "preset": cfg.get("preset") or "",
+            "options": pe_options(),
+            "enabled": bool(cfg.get("enabled", True)),
+        }
+    )
+
+
+@require_auth
+async def handle_pe_set(request: web.Request) -> web.Response:
+    body = await request.json()
+    preset = str(body.get("preset") or "")
+    cfg = CFG.get("prompt_enhancer") or {}
+    if preset not in (cfg.get("presets") or {}):
+        raise web.HTTPBadRequest(text="没有这个扩写方案")
+    cfg["preset"] = preset
+    CFG["prompt_enhancer"] = cfg
+    save_config()
+    log.info("提示词扩写方案已切换为:%s", preset)
+    return web.json_response({"ok": True, "preset": preset, "options": pe_options()})
+
+
+@require_auth
 async def handle_settings_get(request: web.Request) -> web.Response:
     return web.json_response(device_notify_summary(device_of(request)))
 
@@ -1527,6 +1588,8 @@ def build_app() -> web.Application:
     app.router.add_post("/api/job/{job_id}/cancel", handle_cancel)
     app.router.add_post("/api/clear", handle_clear)
     app.router.add_post("/api/notify/test", handle_notify_test_auth)
+    app.router.add_get("/api/pe", handle_pe_get)
+    app.router.add_post("/api/pe", handle_pe_set)
     app.router.add_get("/api/settings", handle_settings_get)
     app.router.add_post("/api/settings", handle_settings_post)
     app.router.add_get("/api/file/{job_id}/{index}", handle_file)

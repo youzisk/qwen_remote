@@ -66,15 +66,37 @@
   },
   "prompt_enhancer": {
     "enabled": true,
-    "engine": "本地",
+    "preset": "pe-heretic",
+    "presets": {
+      "gguf": {
+        "label": "本地大模型(解限 GGUF,中文)",
+        "engine": "本地",
+        "main_model": "Q35-4B-U-HauhauCS\\Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-Q6_K.gguf",
+        "mmproj": "Q35-4B-U-HauhauCS\\mmproj-Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-BF16.gguf"
+      },
+      "pe": {
+        "label": "官方 PE(原版,中文)",
+        "engine": "本地官方PE",
+        "t2i_model": "qwen3.5_9b_qwen_image_2.1_pe_t2i.int8_convrot.safetensors",
+        "i2i_model": "qwen3.5_9b_qwen_image_2.1_pe_i2i.int8_convrot.safetensors",
+        "main_model": "Q35-4B-G-UD\\Qwen3.5-4B-UD-Q6_K_XL.gguf",
+        "mmproj": "无"
+      },
+      "pe-heretic": {
+        "label": "官方 PE(解限版,英文)",
+        "engine": "本地官方PE",
+        "t2i_model": "qwen3.5_9b_qwen_image_2.1_pe_t2i_heretic.int8_convrot.safetensors",
+        "i2i_model": "qwen3.5_9b_qwen_image_2.1_pe_i2i_heretic.int8_convrot.safetensors",
+        "main_model": "Q35-4B-G-UD\\Qwen3.5-4B-UD-Q6_K_XL.gguf",
+        "mmproj": "无"
+      }
+    },
     "language": "中文",
-    "t2i_model": "qwen3.5_9b_qwen_image_2.1_pe_t2i.int8_convrot.safetensors",
-    "i2i_model": "qwen3.5_9b_qwen_image_2.1_pe_i2i.int8_convrot.safetensors",
-    "main_model": "Q35-4B-U-HauhauCS\\Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-Q6_K.gguf",
-    "mmproj": "Q35-4B-U-HauhauCS\\mmproj-Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-BF16.gguf",
     "max_tokens": 2048,
     "context": 8192,
     "unload_after": true,
-    "think": false
+    "think": false,
+    "api_base_url": "https://teynex.com",
+    "api_model": "deepseek-v4.1-flash"
   }
 }

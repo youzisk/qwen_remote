@@ -446,11 +446,40 @@ function renderNotifyForm(root, data) {
   };
 }
 
+function renderPeSelect(data) {
+  const select = $('pePreset');
+  const options = data.options || [];
+  select.innerHTML = options
+    .map(function (o) {
+      const sel = o.id === data.preset ? ' selected' : '';
+      return '<option value="' + escapeHtml(o.id) + '"' + sel + '>' + escapeHtml(o.label) + '</option>';
+    })
+    .join('');
+  const describe = function (id) {
+    const hit = options.find(function (o) { return o.id === id; });
+    return hit ? '当前:' + hit.label : '还没选择扩写方案';
+  };
+  $('peState').textContent = describe(data.preset);
+  select.onchange = async function () {
+    try {
+      const res = await api('/api/pe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ preset: select.value }),
+      });
+      $('peState').textContent = describe(res.preset);
+      toast('扩写方案已切换');
+    } catch (err) {
+      toast(err.message);
+    }
+  };
+}
+
 async function openSettings() {
   $('settingsBox').classList.remove('hidden');
   try {
-    const data = await api('/api/settings');
-    appNotifyForm = renderNotifyForm($('appNotify'), data);
+    renderPeSelect(await api('/api/pe'));
+    appNotifyForm = renderNotifyForm($('appNotify'), await api('/api/settings'));
   } catch (err) {
     toast(err.message);
   }
