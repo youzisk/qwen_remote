@@ -1,0 +1,4 @@
+# 批处理文件必须保持 CRLF,否则 cmd 解析会错位
+*.bat text eol=crlf
+*.py text
+*.md text

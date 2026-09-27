@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1115">
+<link rel="manifest" href="/static/manifest.json">
+<link rel="apple-touch-icon" href="/static/icon-192.png">
+<title>出图助手</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<section id="login" class="login hidden">
+  <div class="login-card">
+    <h1>出图助手</h1>
+    <p class="hint">输入电脑上显示的口令</p>
+    <input id="tokenInput" type="password" inputmode="text" autocomplete="current-password" placeholder="访问口令">
+    <details class="more" id="loginNotifyBox">
+      <summary>接收出图通知(可选)</summary>
+      <div id="loginNotify" class="notify-form"></div>
+    </details>
+    <button id="loginBtn" class="primary">进入</button>
+    <p id="loginErr" class="err"></p>
+  </div>
+</section>
+
+<div id="shell" class="hidden">
+  <header>
+    <div class="title">出图助手</div>
+    <div class="head-right">
+      <div id="statusPill" class="pill off">连接中</div>
+      <button id="settingsBtn" class="icon-btn" aria-label="设置">⚙</button>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active" data-tab="t2i">文生图</button>
+    <button class="tab" data-tab="edit">改图</button>
+    <button class="tab" data-tab="history">记录</button>
+  </nav>
+
+  <main>
+    <section class="panel" id="panel-t2i">
+      <div class="prompt-head">
+        <span class="label">提示词</span>
+        <button class="ghost small" id="t2iEnhance">✨ AI 扩写</button>
+      </div>
+      <textarea id="t2iPrompt" rows="5" placeholder="描述你想画的内容…"></textarea>
+      <details class="more">
+        <summary>更多设置</summary>
+        <label class="label">负面提示词</label>
+        <textarea id="t2iNegative" rows="2" placeholder="不想出现的内容"></textarea>
+      </details>
+
+      <div class="label">尺寸</div>
+      <div class="chips" id="sizeChips"></div>
+
+      <div class="row">
+        <span class="label">步数 <b id="t2iStepsVal">20</b></span>
+        <span class="hint" id="t2iEta"></span>
+      </div>
+      <input id="t2iSteps" type="range" min="4" max="50" step="2" value="20">
+      <div class="chips small" id="stepChips"></div>
+
+      <button class="primary big" id="t2iGo">生成图片</button>
+    </section>
+
+    <section class="panel hidden" id="panel-edit">
+      <div class="prompt-head">
+        <span class="label">提示词</span>
+        <button class="ghost small" id="editEnhance">✨ AI 扩写</button>
+      </div>
+      <textarea id="editPrompt" rows="4" placeholder="想怎么改?例如:把背景换成夜晚的城市"></textarea>
+
+      <div class="label">参考图(可多选,按顺序 1、2、3…)</div>
+      <div class="picker">
+        <label class="add-btn">
+          <input type="file" id="editFiles" accept="image/*" multiple hidden>
+          <span>+ 选择图片</span>
+        </label>
+        <div id="thumbs" class="thumbs"></div>
+      </div>
+
+      <div class="label">图片精度</div>
+      <div class="chips" id="mpChips"></div>
+
+      <div class="row">
+        <span class="label">步数 <b id="editStepsVal">20</b></span>
+        <span class="hint" id="editEta"></span>
+      </div>
+      <input id="editSteps" type="range" min="4" max="50" step="2" value="20">
+
+      <button class="primary big" id="editGo">开始改图</button>
+    </section>
+
+    <section class="panel hidden" id="panel-history">
+      <div class="history-actions">
+        <button class="ghost" id="refreshBtn">刷新</button>
+        <button class="ghost danger" id="clearBtn">清空记录</button>
+        <button class="ghost" id="notifyTest">测试通知</button>
+      </div>
+      <div id="historyList" class="history"></div>
+    </section>
+  </main>
+
+  <div id="jobBar" class="jobbar hidden">
+    <div class="bar"><div id="jobFill"></div></div>
+    <div class="jobtext"><span id="jobLabel">排队中</span><button id="cancelBtn" class="ghost small">取消</button></div>
+  </div>
+</div>
+
+<div id="viewer" class="viewer hidden">
+  <img id="viewerImg" alt="">
+  <div class="viewer-actions">
+    <a id="viewerSave" class="primary" download>保存到手机</a>
+    <button id="viewerClose" class="ghost">关闭</button>
+  </div>
+</div>
+
+<div id="enhance" class="viewer hidden">
+  <div class="enhance-card">
+    <div class="enhance-title">✨ AI 扩写结果<span class="hint" id="enhanceHint"></span></div>
+    <textarea id="enhanceText" rows="14" placeholder="扩写结果会出现在这里,可以直接改"></textarea>
+    <div class="viewer-actions">
+      <button id="enhanceApply" class="primary">替换提示词</button>
+      <button id="enhanceClose" class="ghost">取消</button>
+    </div>
+  </div>
+</div>
+
+<div id="settingsBox" class="viewer hidden">
+  <div class="enhance-card">
+    <div class="enhance-title">通知设置</div>
+    <p class="hint">这里设置的是<strong>这台设备</strong>的推送,别的设备各推各的。</p>
+    <div id="appNotify" class="notify-form"></div>
+    <div class="viewer-actions">
+      <button id="settingsSave" class="primary">保存</button>
+      <button id="settingsClose" class="ghost">关闭</button>
+    </div>
+  </div>
+</div>
+
+<div id="clearBox" class="viewer hidden">
+  <div class="enhance-card">
+    <div class="enhance-title">清空记录<span class="hint" id="clearHint"></span></div>
+    <p class="hint">清掉之后手机上就看不到这些图了。磁盘上的图片要不要一起删?</p>
+    <div class="viewer-actions">
+      <button id="clearRecords" class="primary">只清记录</button>
+      <button id="clearBoth" class="ghost danger">连图片一起删</button>
+      <button id="clearCancel" class="ghost">取消</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
+

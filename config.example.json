@@ -1,0 +1,66 @@
+{
+  "comfy_url": "http://127.0.0.1:8188",
+  "comfy_input_dir": "D:\\qwen mou\\ComfyUI_windows_portable\\ComfyUI\\input",
+  "comfy_output_dir": "D:\\qwen mou\\ComfyUI_windows_portable\\ComfyUI\\output",
+  "port": 8899,
+  "access_token": "",
+  "job_timeout_sec": 1800,
+  "max_input_edge": 2048,
+  "max_upload_mb": 10,
+  "max_body_mb": 80,
+  "max_images_per_job": 6,
+  "keep_jobs": 100,
+  "history_scope": "device",
+  "output_cleanup": {
+    "enabled": true,
+    "keep": 300,
+    "max_age_days": 30
+  },
+  "notify": {
+    "enabled": true,
+    "channel": "none",
+    "webhook": "",
+    "token": "",
+    "on_success": true,
+    "on_failure": true,
+    "include_prompt": true,
+    "fallback_to_global": true
+  },
+  "models": {
+    "unet": "qwen-image-2.1-UC-Q4_K_M.gguf",
+    "clip": "qwen3vl_8b_int8_convrot.safetensors",
+    "vae": "qwen_image_2.1_vae_bf16.safetensors"
+  },
+  "defaults": {
+    "steps": 20,
+    "cfg": 1.0,
+    "sampler_name": "euler",
+    "scheduler": "simple",
+    "width": 1024,
+    "height": 1024,
+    "megapixels": 1.5
+  },
+  "acceleration": {
+    "enabled": true,
+    "attention": "kitchen_int8",
+    "step_cache": "te_predictor",
+    "reuse_threshold": 0.06,
+    "start_percent": 0.0,
+    "end_percent": 0.0,
+    "predictor_error_limit": 0.08,
+    "verbose": true
+  },
+  "prompt_enhancer": {
+    "enabled": true,
+    "engine": "本地",
+    "language": "中文",
+    "t2i_model": "qwen3.5_9b_qwen_image_2.1_pe_t2i.int8_convrot.safetensors",
+    "i2i_model": "qwen3.5_9b_qwen_image_2.1_pe_i2i.int8_convrot.safetensors",
+    "main_model": "Q35-4B-U-HauhauCS\\Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-Q6_K.gguf",
+    "mmproj": "Q35-4B-U-HauhauCS\\mmproj-Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-BF16.gguf",
+    "max_tokens": 2048,
+    "context": 8192,
+    "unload_after": true,
+    "think": false
+  }
+}

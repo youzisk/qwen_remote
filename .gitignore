@@ -1,0 +1,13 @@
+# ---- 运行时数据(含密钥、历史记录、设备配置)----
+work/
+config.json
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+
+# ---- 备份与临时文件 ----
+*.zip
+*.bak
+~$*
+.DS_Store

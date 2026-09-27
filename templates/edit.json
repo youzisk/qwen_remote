@@ -1,0 +1,29 @@
+{
+  "unet": { "class_type": "UnetLoaderGGUF", "inputs": { "unet_name": "qwen-image-2.1-UC-Q4_K_M.gguf" } },
+  "clip": { "class_type": "CLIPLoader", "inputs": { "clip_name": "qwen3vl_8b_int8_convrot.safetensors", "type": "qwen_image", "device": "default" } },
+  "vae":  { "class_type": "VAELoader", "inputs": { "vae_name": "qwen_image_2.1_vae_bf16.safetensors" } },
+
+  "img_1":   { "class_type": "LoadImage", "inputs": { "image": "example.png" } },
+  "scale_1": { "class_type": "ImageScaleToTotalPixels", "inputs": {
+                 "image": ["img_1", 0], "upscale_method": "lanczos",
+                 "megapixels": 1.5, "resolution_steps": 32 } },
+
+  "enc": { "class_type": "TextEncodeQwenImage21", "inputs": {
+             "clip": ["clip", 0],
+             "vae": ["vae", 0],
+             "prompt": "把背景换成星空，保持主体不变",
+             "negative_prompt": "",
+             "resolution": 0,
+             "images.image_1": ["scale_1", 0] } },
+
+  "ks": { "class_type": "KSampler", "inputs": {
+            "model": ["unet", 0],
+            "positive": ["enc", 0],
+            "negative": ["enc", 1],
+            "latent_image": ["enc", 2],
+            "seed": 777, "steps": 6, "cfg": 1.0,
+            "sampler_name": "euler", "scheduler": "simple", "denoise": 1.0 } },
+
+  "dec":  { "class_type": "VAEDecode", "inputs": { "samples": ["ks", 0], "vae": ["vae", 0] } },
+  "save": { "class_type": "SaveImage", "inputs": { "images": ["dec", 0], "filename_prefix": "phone_edit_test" } }
+}
