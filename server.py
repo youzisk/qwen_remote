@@ -1533,24 +1533,36 @@ async def main() -> None:
         await comfy.stop()
 
 
+def run_cli() -> bool:
+    """几个简单的命令行操作,方便直接在主机上改配置。"""
+    args = sys.argv[1:]
+    if not args:
+        return False
+    if args[0] in ("--set-token", "-t") and len(args) > 1:
+        token = args[1].strip()
+        if len(token) < 6:
+            print("口令至少 6 位")
+            return True
+        CFG["access_token"] = token
+        save_config()
+        print("访问口令已更新:", token)
+        return True
+    if args[0] in ("--show-token", "-s"):
+        print("当前访问口令:", CFG["access_token"])
+        return True
+    if args[0] in ("--help", "-h"):
+        print("用法:")
+        print("  python server.py                     启动服务")
+        print("  python server.py --show-token        查看当前口令")
+        print("  python server.py --set-token 新口令   修改访问口令")
+        return True
+    return False
+
+
 if __name__ == "__main__":
+    if run_cli():
+        sys.exit(0)
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
         pass
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
