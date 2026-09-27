@@ -900,12 +900,22 @@ async def save_upload(part, index: int) -> str:
 
     has_alpha = image.mode in ("RGBA", "LA") or (image.mode == "P" and "transparency" in image.info)
     stamp = f"phone_{int(time.time())}_{index}_{secrets.token_hex(3)}"
-    if has_alpha:
-        name = f"{stamp}.png"
-        image.convert("RGBA").save(INPUT_DIR / name, "PNG")
-    else:
-        name = f"{stamp}.jpg"
-        image.convert("RGB").save(INPUT_DIR / name, "JPEG", quality=95)
+    try:
+        if has_alpha:
+            name = f"{stamp}.png"
+            image.convert("RGBA").save(INPUT_DIR / name, "PNG")
+        else:
+            name = f"{stamp}.jpg"
+            image.convert("RGB").save(INPUT_DIR / name, "JPEG", quality=95)
+    except PermissionError as exc:
+        log.warning("写不进 ComfyUI 的 input 目录: %s", exc)
+        raise web.HTTPInternalServerError(
+            text="保存图片失败:服务没有写入 ComfyUI input 目录的权限。"
+            "请用 run.bat 重新启动服务(不要在受限环境里启动)。"
+        ) from exc
+    except OSError as exc:  # noqa: BLE001
+        log.warning("保存上传图片失败: %s", exc)
+        raise web.HTTPInternalServerError(text=f"保存图片失败:{exc}") from exc
     return name
 
 
@@ -1302,6 +1312,18 @@ async def error_middleware(request: web.Request, handler):
     except Exception as exc:  # noqa: BLE001
         log.exception("处理 %s 出错", request.path)
         return web.Response(text=f"服务器出错:{exc}", status=500)
+
+
+def port_in_use(port: int) -> bool:
+    """检测端口是否已被监听(用来避免两个实例同时跑)。"""
+    import socket as _socket
+
+    try:
+        with _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM) as sock:
+            sock.settimeout(1.5)
+            return sock.connect_ex(("127.0.0.1", port)) == 0
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def body_limit_bytes() -> int:
@@ -1886,6 +1908,14 @@ async def main() -> None:
     runner = web.AppRunner(app)
     await runner.setup()
     port = int(CFG["port"])
+    if port_in_use(port):
+        log.error(
+            "端口 %s 已经被占用,说明已经有一个实例在跑。请先关掉那个窗口"
+            "(或在任务管理器里结束对应的 python.exe)再启动本程序 —— "
+            "两个实例同时监听会让任务时好时坏。",
+            port,
+        )
+        return
     # 默认同时监听 IPv4 和 IPv6,这样手机走移动数据(IPv6)也能直连
     for host in (CFG.get("bind") or ["0.0.0.0", "::"]):
         try:
